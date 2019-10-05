@@ -206,6 +206,9 @@ static double decoration_alpha = 0.5;
 
 #define SWITCHER_SPACE 40
 
+#ifdef HAVE_MARCO_1_22_2
+static decor_extents_t _resize_extents      = {10, 10, 10, 10};
+#endif
 static decor_extents_t _shadow_extents      = { 0, 0, 0, 0 };
 static decor_extents_t _win_extents         = { 6, 6, 4, 6 };
 static decor_extents_t _max_win_extents     = { 6, 6, 4, 6 };
@@ -214,6 +217,8 @@ static decor_extents_t _switcher_extents    = { 6, 6, 6, 6 + SWITCHER_SPACE };
 
 static int titlebar_height = 17;
 static int max_titlebar_height = 17;
+
+static gint scale;
 
 static decor_context_t window_context = {
     { 0, 0, 0, 0 },
@@ -1518,7 +1523,15 @@ decor_update_meta_window_property (decor_t	  *d,
 					     top_stretch_offset,
 					     bottom_stretch_offset);
 
+#ifdef HAVE_MARCO_1_22_2
+    /*Add the new invisible borders from marco to frame extents */
+    extents.left = _win_extents.left + _resize_extents.left;
+    extents.right = _win_extents.right + _resize_extents.right;
+    extents.top = _win_extents.top + _resize_extents.top;
+    extents.bottom = _win_extents.bottom + _resize_extents.bottom;
+#else
     extents = _win_extents;
+#endif
     max_extents = _max_win_extents;
 
     extents.top += titlebar_height;
@@ -1563,10 +1576,10 @@ meta_get_corner_radius (const MetaFrameGeometry *fgeom,
 			int		        *bottom_left_radius,
 			int			*bottom_right_radius)
 {
-    *top_left_radius     = fgeom->top_left_corner_rounded_radius;
-    *top_right_radius    = fgeom->top_right_corner_rounded_radius;
-    *bottom_left_radius  = fgeom->bottom_left_corner_rounded_radius;
-    *bottom_right_radius = fgeom->bottom_right_corner_rounded_radius;
+    *top_left_radius     = fgeom->top_left_corner_rounded_radius * scale;
+    *top_right_radius    = fgeom->top_right_corner_rounded_radius * scale;
+    *bottom_left_radius  = fgeom->bottom_left_corner_rounded_radius * scale;
+    *bottom_right_radius = fgeom->bottom_right_corner_rounded_radius * scale;
 }
 
 static int
@@ -2337,13 +2350,14 @@ meta_draw_window_decoration (decor_t *d)
 	    XOffsetRegion (bottom_region, -fgeom.left_width, 0);
 	if (left_region)
 	    XOffsetRegion (left_region, -fgeom.left_width, 0);
-#endif
 
+#endif
 	decor_update_meta_window_property (d, theme, flags,
 					   top_region,
 					   bottom_region,
 					   left_region,
 					   right_region);
+
 	d->prop_xid = 0;
     }
 
@@ -3103,7 +3117,7 @@ meta_get_event_window_position (decor_t *d,
 				  &clip);
 #ifdef HAVE_MARCO_1_22_2
     visible = fgeom.borders.visible;
-    resize = fgeom.borders.total;
+    resize = fgeom.borders.invisible;
 
     /*  When shadow borders are added, we will no longer be able to use
      * `fgeom->borders.total` border here - it includes also
@@ -3124,26 +3138,25 @@ meta_get_event_window_position (decor_t *d,
 
     top_border = fgeom.title_rect.y - fgeom.borders.invisible.top;
 
-
     switch (i) {
     case 2: /* bottom */
 	switch (j) {
 	case 2: /* bottom right */
 	    *x = fgeom.width - resize.right - RESIZE_EXTENDS;
-	    *y = fgeom.height - resize.bottom - RESIZE_EXTENDS;
+	    *y = fgeom.height - RESIZE_EXTENDS;
 	    *w = resize.right + RESIZE_EXTENDS;
 	    *h = resize.bottom + RESIZE_EXTENDS;
 	    break;
 	case 1: /* bottom */
 	    *x = resize.left  + RESIZE_EXTENDS;
-	    *y = fgeom.height - resize.bottom - RESIZE_EXTENDS;
+	    *y = fgeom.height - RESIZE_EXTENDS;
 	    *w = fgeom.width - resize.left - resize.right - (2 * RESIZE_EXTENDS);
-	    *h = resize.bottom;
+	    *h = resize.bottom +  RESIZE_EXTENDS;
 	    break;
 	case 0: /* bottom left */
 	default:
 	    *x = 0;
-	    *y = fgeom.height - resize.bottom - RESIZE_EXTENDS;
+	    *y = fgeom.height - RESIZE_EXTENDS;
 	    *w = resize.left + RESIZE_EXTENDS;
 	    *h = resize.bottom + RESIZE_EXTENDS;
 	    break;
@@ -3418,9 +3431,13 @@ meta_get_button_position (decor_t *d,
 #ifdef HAVE_MARCO_1_22_2
     /*compensate for offset caused by invisible borders
      *taken straight from compiz 0.9
+     *but exclude left side buttons so resize border isn't blocked
      */
-    *x = *x - fgeom.borders.invisible.left;
-    *y = *y - fgeom.borders.invisible.top;
+    if (*x >= 20)
+    {
+        *x = *x - fgeom.borders.invisible.left;
+        *y = *y + fgeom.borders.invisible.top;
+    }
 #endif
     return TRUE;
 }
@@ -3643,6 +3660,7 @@ static void
 update_window_decoration_icon (WnckWindow *win)
 {
     decor_t *d = g_object_get_data (G_OBJECT (win), "decor");
+    int icon_width, icon_height;
 
     if (d->icon)
     {
@@ -3657,9 +3675,15 @@ update_window_decoration_icon (WnckWindow *win)
     }
 
     if (d->icon_pixbuf)
-	g_object_unref (G_OBJECT (d->icon_pixbuf));
-
+    {
+	    g_object_unref (G_OBJECT (d->icon_pixbuf));
+    }
     d->icon_pixbuf = wnck_window_get_mini_icon (win);
+	icon_width = gdk_pixbuf_get_width(d->icon_pixbuf);
+    icon_height = gdk_pixbuf_get_height(d->icon_pixbuf);
+    d->icon_pixbuf = gdk_pixbuf_scale_simple (d->icon_pixbuf, icon_width * scale,
+                                              icon_height * scale, GDK_INTERP_BILINEAR);
+
     if (d->icon_pixbuf)
     {
 	cairo_t	*cr;
@@ -7598,7 +7622,10 @@ main (int argc, char *argv[])
 #if GTK_CHECK_VERSION(3, 10, 0)
     /* We need to be able to fully trust that the window and monitor sizes
      * that GDK reports corresponds to the X ones, so we disable the automatic
-     * scale handling */
+     * scale handling
+     * Get the scale factor first though and keep it here
+     */
+    scale = gdk_window_get_scale_factor (gdk_get_default_root_window ());
     gdk_x11_display_set_window_scale(gdkdisplay, 1);
 #endif
 
